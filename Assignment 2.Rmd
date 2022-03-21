@@ -1,0 +1,240 @@
+---
+title: "assignment 2"
+author: "Shruti Chanda, Shubham Chaudhary, Aarjav Sanghvi"
+date: "10/18/2021"
+output: html_document
+---
+
+Importing libraries
+```{r}
+install.packages("ggplotgui")
+install.packages("randomForest")
+install.packages("xgboost")
+
+Pack <- c("tidyverse", "lubridate", "magrittr", "ggplot2", "pROC", "dplyr", "ggplotgui", "broom", "rpart", "C50", "ranger", "randomForest", "caret", "lift", "ROCR", "xgboost", "glmnet")
+
+lapply(Pack, library, character.only = TRUE)
+```
+
+importing the updated dataset
+```{r}
+df <- read_csv("df3.csv")
+glimpse(df)
+```
+
+manipulating data
+```{r}
+df[sapply(df, is.character)] <- lapply(df[sapply(df, is.character)],as.factor)
+sapply(df,class)
+```
+
+splitting data
+```{r}
+TRNPROP = 0.5  #proportion of examples in the training sample
+nr<-nrow(df)
+trnIndex<- sample(1:nr, size = round(TRNPROP * nr), replace=FALSE)
+lcdfTrn <- df[trnIndex, ]
+lcdfTst <- df[-trnIndex, ]
+```
+
+Question 1- XGBoost
+```{r}
+fdum<-dummyVars(~.,data=df %>% select(-loan_status)) #do not include loan_status for this
+dxlcdf <- predict(fdum, df)
+
+levels(df$loan_status)
+dylcdf <- class2ind(df$loan_status, drop2nd = FALSE) 
+#fplcdf <- dycldf [ , 2] 
+colcdf <- dylcdf [ , 1]
+
+dxlcdfTrn <- dxlcdf[trnIndex,]
+colcdfTrn <- colcdf[trnIndex]
+dxlcdfTst <- dxlcdf[-trnIndex,]
+colcdfTst <- colcdf[-trnIndex]
+
+dxTrn <- xgb.DMatrix( subset(dxlcdfTrn, select=-c(annRet, actualTerm, actualReturn, total_pymnt)), label=colcdfTrn)
+dxTst <- xgb.DMatrix( subset( dxlcdfTst,select=-c(annRet, actualTerm, actualReturn, total_pymnt)), label=colcdfTst)
+
+xgbWatchlist <- list(train = dxTrn, eval = dxTst)
+
+xgbParam <- list (max_depth = 5, eta = 0.01, objective = "binary:logistic",eval_metric="error", eval_metric = "auc")
+
+xgb_lsM1 <- xgb.train( xgbParam, dxTrn, nrounds = 500, xgbWatchlist, early_stopping_rounds = 10 )
+
+
+xgb_lsM1$best_iteration
+ 
+xpredTrg<-predict(xgb_lsM1, dxTrn) # best_iteration is used
+head(xpredTrg)
+
+xgb_lsM1
+ 
+table(pred=as.numeric(xpredTrg>0.5), act=colcdfTrn)
+
+xpredTst<-predict(xgb_lsM1, dxTst)
+pred_xgb_lsM1=prediction(xpredTst, lcdfTst$loan_status, label.ordering = c("Fully Paid","Charged Off"))
+aucPerf_xgb_lsM1=performance(pred_xgb_lsM1, "tpr", "fpr")
+plot(aucPerf_xgb_lsM1)
+abline(a=0, b= 1)
+
+xgbParam <- list (max_depth = 3, eta = 0.1, objective = "binary:logistic", eval_metric="error", eval_metric = "auc")
+
+xgb_lscv <- xgb.cv( xgbParam, dxTrn, nrounds = 500, nfold=5, early_stopping_rounds = 10 )
+
+xgb_lscv$best_iteration
+
+best_cvIter <- which.max(xgb_lscv$evaluation_log$test_auc_mean)
+xgb_lsbest <- xgb.train( xgbParam, dxTrn, nrounds = xgb_lscv$best_iteration )
+
+xgb.importance(model = xgb_lsbest) %>% view()
+xgbParam <- list (max_depth = 4, objective = "binary:logistic", eval_metric="error", eval_metric = "auc")
+xgb_lsM1 <- xgb.train( xgbParam, dxTrn, nrounds = 500, xgbWatchlist, early_stopping_rounds = 10, eta=0.01 )
+
+xgbParam <- list (max_depth = 4, objective = "binary:logistic", eval_metric="auc", eval_metric = "error")
+xgb_lsM1 <- xgb.train( xgbParam, dxTrn, nrounds = 500, xgbWatchlist, early_stopping_rounds = 10, eta=0.01 )
+
+xgb_lsM1 <- xgb.train( xgbParam, dxTrn, nrounds = 500, xgbWatchlist, early_stopping_rounds = 10, eta=0.5 )
+
+xgbParam1<-list(objective = "binary:logistic", eval_metric="auc", eval_metric = "error")
+
+xgb_lsM1 <- xgb.train( xgbParam1, dxTrn, nrounds = 500, xgbWatchlist, 
+early_stopping_rounds = 10, eta=0.1, max_depth=6 )
+
+xgb_lsM1 <- xgb.train( xgbParam1, dxTrn, nrounds = 1000, xgbWatchlist, 
+early_stopping_rounds = 10, eta=0.1, max_depth=6, lambda=0.05 )
+
+xgb_lsM1 <- xgb.train( xgbParam1, dxTrn, nrounds = 1000, xgbWatchlist, early_stopping_rounds = 10, eta=0.1, max_depth=6, lambda=0.05, subsample=0.7, colsample_bytree=0.5 )
+
+xgb_lsM1 <- xgb.train( xgbParam1, dxTrn, nrounds = 1000, xgbWatchlist, early_stopping_rounds
+= 10, eta=0.01, max_depth=6, subsample=0.7, colsample_bytree=0.5 )
+
+xgbParamGrid <- expand.grid(max_depth = c(2, 5), eta = c(0.001, 0.01, 0.1) )
+
+```
+
+
+Question 2- GLM model -> LASSO REGRESSION
+```{r}
+#LASSO REGRESSION
+xD<-lcdfTrn %>% select(-loan_status, -actualTerm, -annRet, -actualReturn, -total_pymnt)
+yD<- lcdfTrn$actualReturn
+
+glmDefault_cv<- cv.glmnet(data.matrix(xD), lcdfTrn$loan_status, family="binomial")
+predDefSc <- predict(glmDefault_cv, data.matrix(lcdfTst %>% select(-loan_status, -actualTerm, -annRet, -actualReturn, -total_pymnt)), s="lambda.1se", type="class")
+glmDefault_cv$lambda.min
+glmDefault_cv$lambda.1se
+tidy(coef(glmDefault_cv, s = glmDefault_cv$lambda.1se))
+plot(glmDefault_cv)
+plot(glmDefault_cv$glmnet.fit, xvar="lambda")
+plot(glmDefault_cv$glmnet.fit)
+summary(glmDefault_cv)
+```
+
+Question 2- GLM model -> RIDGE REGRESSION
+```{r}
+#Ridge Regression
+yTrn<-factor(if_else(lcdfTrn$loan_status=="Fully Paid", '1', '0') )
+xDTrn<-lcdfTrn%>% select(-loan_status, -actualTerm, -annRet, -actualReturn, -total_pymnt, -issue_d)
+glmls_cv_a0<- cv.glmnet(data.matrix(xDTrn), lcdfTrn$loan_status, family="binomial", alpha=0)
+plot(glmls_cv_a0)
+```
+
+Question 2- GLM model -> ELASTIC-NET REGRESSION
+```{r}
+#Elastic-Net Regression
+glmls_cv_a2<- cv.glmnet(data.matrix(xDTrn), lcdfTrn$loan_status, family="binomial", alpha=0.2)
+plot(glmls_cv_a2)
+glmls_a5<- glmnet(data.matrix(xDTrn), lcdfTrn$loan_status, family="binomial", alpha=0.5)
+plot(glmls_a5)
+```
+
+Random Forest for comparison purposes in various questions
+```{r}
+rfModel_Ret <- ranger(actualReturn ~., data=subset(lcdfTrn, select=-c(annRet, actualTerm, loan_status)), num.trees =200, 
+importance='permutation')
+rfPredRet_trn<- predict(rfModel_Ret, lcdfTrn)
+sqrt(mean( (rfPredRet_trn$predictions - lcdfTrn$actualReturn)^2))
+#sqrt(mean( ( (predict(rfModel_Ret, lcdfTst))$predictions - lcdfTst$actualReturn)^2))
+plot ( (predict(rfModel_Ret, lcdfTst))$predictions, lcdfTst$actualReturn)
+plot ( (predict(rfModel_Ret, lcdfTrn))$predictions, lcdfTrn$actualReturn)
+```
+Question 3
+```{r}
+xpredTst<-predict(xgb_lsM1, dxTst)
+scoreTst_xgb_ls <- lcdfTst %>% select(grade, loan_status, actualReturn, actualTerm, int_rate) %>% mutate(score=xpredTst)
+scoreTst_xgb_ls <- scoreTst_xgb_ls %>% mutate(tile=ntile(-score, 10))
+scoreTst_xgb_ls %>% group_by(tile) %>% summarise(count=n(), avgSc=mean(score), numDefaults=sum(loan_status=="Charged Off"), 
+avgActRet=mean(actualReturn), minRet=min(actualReturn), maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), 
+totB=sum(grade=="B" ), totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+```
+
+Question 3- performance by decile
+```{r}
+#Performance by deciles
+predRet_Trn <- lcdfTrn %>% select(grade, loan_status, actualReturn, actualTerm, int_rate) %>% mutate(predRet=(predict(rfModel_Ret, lcdfTrn))$predictions)
+predRet_Trn <- predRet_Trn %>% mutate(tile=ntile(-predRet, 10))
+predRet_Trn %>% group_by(tile) %>% summarise(count=n(), avgpredRet=mean(predRet), numDefaults=sum(loan_status=="Charged Off"), 
+avgActRet=mean(actualReturn), minRet=min(actualReturn), maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), totB=sum(grade=="B" ), totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+```
+
+Question 4- Loan status 
+```{r}
+#Predict loan status
+xpredTst<-predict(xgb_lsM1, dxTst)
+scoreTst_xgb_ls <- lcdfTst %>% select(grade, loan_status, actualReturn, actualTerm, int_rate) %>% mutate(score=xpredTst)
+scoreTst_xgb_ls <- scoreTst_xgb_ls %>% mutate(tile=ntile(-score, 10))
+scoreTst_xgb_ls %>% group_by(tile) %>% summarise(count=n(), avgSc=mean(score), numDefaults=sum(loan_status=="Charged Off"), 
+avgActRet=mean(actualReturn), minRet=min(actualReturn), maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), 
+totB=sum(grade=="B" ), totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+
+#test for above
+#colcdf1 <- subset(colcdfTst,select=-c(annRet, actualTerm, total_pymnt, actualReturn))
+predXgbRet_Tst <- lcdfTst %>% select(grade, loan_status, actualReturn, actualTerm, int_rate) %>% mutate(predXgbRet=predict(xgb_lsM1, subset(colcdfTst,select=-c(annRet, actualTerm, total_pymnt, actualReturn))) )
+predXgbRet_Tst <- predXgbRet_Tst %>% mutate(tile=ntile(-predXgbRet, 10))
+predXgbRet_Tst %>% group_by(tile) %>% summarise(count=n(), avgPredRet=mean(predXgbRet), 
+numDefaults=sum(loan_status=="Charged Off"), avgActRet=mean(actualReturn), minRet=min(actualReturn), 
+maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), totB=sum(grade=="B" ), 
+totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+
+#Consider top d deciles from M2, ranked by M1 scores
+pRetSc <- predXgbRet_Tst %>% mutate(poScore=scoreTst_xgb_ls$score)
+pRet_d <- pRetSc %>% filter(tile<=d)
+pRet_d<- pRet_d %>% mutate(tile2=ntile(-poScore, 20))
+pRet_d %>% group_by(tile2) %>% summarise(count=n(), avgPredRet=mean(predXgbRet), 
+numDefaults=sum(loan_status=="Charged Off"), avgActRet=mean(actualReturn), minRet=min(actualReturn), 
+maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), totB=sum(grade=="B" ),
+totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+
+#considering top d decile from M2
+pRet_d<- pRet_d %>% mutate(expRet=predXgbRet*poScore)
+pRet_d<- pRet_d %>% mutate(tile2=ntile(-expRet, 20))
+pRet_d %>% group_by(tile2) %>% summarise(count=n(), avgPredRet=mean(predXgbRet), 
+numDefaults=sum(loan_status=="Charged Off"), avgActRet=mean(actualReturn), minRet=min(actualReturn), 
+maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), totB=sum(grade=="B" ), 
+totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+
+#Modeling loan_statuson lower grade loans - rf (ranger)
+
+lg_lcdfTst<-lcdfTst %>% filter(grade=='C'| grade=='D'| grade== 'E'| grade== 'F'| grade== 'G')
+rf_M1_lg <- ranger(loan_status ~., data=subset(lg_lcdfTrn, select=-c(annRet, actualTerm, actualReturn)), num.trees =200, 
+probability=TRUE, importance='permutation') 
+lg_scoreTstRF <- lg_lcdfTst %>% select(grade, loan_status, actualReturn, actualTerm, int_rate) %>% 
+mutate(score=(predict(rf_M1_lg,lg_lcdfTst))$predictions[,"Fully Paid"])
+lg_scoreTstRF <- lg_scoreTstRF %>% mutate(tile=ntile(-score, 10))
+lg_scoreTstRF %>% group_by(tile) %>% summarise(count=n(), avgSc=mean(score), numDefaults=sum(loan_status=="Charged Off"), avgActRet=mean(actualReturn), minRet=min(actualReturn), 
+maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), totB=sum(grade=="B" ), 
+totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F"))
+
+
+```
+
+Question 5- ntile for glmnet
+```{r}
+predRet_Trn <- predRet_Trn %>% mutate(tile=ntile(-predRet, 10))
+predRet_Trn %>% group_by(tile) %>% summarise(count=n(), avgpredRet=mean(predRet), numDefaults=sum(loan_status=="Charged Off"), 
+avgActRet=mean(actualReturn), minRet=min(actualReturn), maxRet=max(actualReturn), avgTer=mean(actualTerm), totA=sum(grade=="A"), 
+totB=sum(grade=="B" ), totC=sum(grade=="C"), totD=sum(grade=="D"), totE=sum(grade=="E"), totF=sum(grade=="F") )
+
+```
+
+

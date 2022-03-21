@@ -1,0 +1,397 @@
+---
+title: "R Notebook"
+author: "Shruti Chanda, Aarjav Sanghvi, Shubham Chaudhary"
+date: "Sept 25, 2021"
+output:
+  html_document: default
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+#Importing packages
+library(tidyverse)
+library(lubridate)
+library(ggcorrplot)
+
+#Accessing the csv data file
+lcdf <- read.csv('lcData100K.csv')
+
+```
+
+
+Q2. Data exploration 
+(a) some questions to consider:
+(i) What is the proportion of defaults (‘charged off’ vs ‘fully paid’ loans) in the data? How does default rate vary with loan grade? Does it vary with sub-grade? And is this what you would expect, and why?
+
+```{r}
+# Grouping data by loan status 
+lcdf %>% group_by(loan_status) %>% tally()
+
+# How default rate varies by grade
+lcdf %>% group_by(grade) %>% summarise(nLoans=n(), defaults=sum(loan_status=="Charged Off"), defaultRate=defaults/nLoans) 
+
+# Default rate varies by sub_grade
+lcdf %>% group_by(sub_grade) %>% summarise(nLoans=n(), defaults=sum(loan_status=="Charged Off"), defaultRate=defaults/nLoans) 
+
+# How many loans are there in each grade?
+lcdf %>% group_by(grade) %>% summarise(nLoans=n())
+
+# Does loan amount vary by grade?
+lcdf %>% group_by(loan_amnt,grade) %>% tally() 
+
+# How interest rate varies by grade, sub grade 
+lcdf %>% group_by(int_rate, grade, sub_grade) %>% tally()
+
+# Visualizing interest rate and grade
+ggplot(lcdf, aes( x = lcdf$int_rate)) + geom_histogram(aes(fill=grade))
+
+# What is the proportion of defaults (‘charged off’ vs ‘fully paid’ loans) in the data?
+lcdf %>% group_by(loan_status) %>% tally()
+
+# How does default rate vary with loan grade? As the loan grade increase the default rate increase which implies a strong positive relation between the attributes.
+lcdf %>% group_by(grade) %>% summarise(nLoans=n(), defaults=sum(loan_status=="Charged Off"), defaultRate=defaults/nLoans)
+
+# Does it vary with sub-grade? Since the major loan grades are the basis for the distinction between the sub grades, a similar pattern can be observed in the sub grade comparison as well.
+lcdf %>% group_by(sub_grade) %>% summarise(nLoans=n(), defaults=sum(loan_status=="Charged Off"), defaultRate=defaults/nLoans)
+```
+
+ii) How many loans are there in each grade? And do loan amounts vary by grade? Does interest rate for loans vary with grade, subgrade? Look at the average, standard-deviation, min and max of interest rate by grade and subgrade. Is this what you expect, and why?
+
+```{r}
+# Grouping data by grade to get the number of loans
+lcdf %>% group_by(grade) %>% summarise(nLoans=n()) 
+
+# And does loan amount vary by grade - There is no clear pattern or a relevant relation between the two variables.
+lcdf %>% group_by(grade) %>% summarise(mean(loan_amnt))
+
+# Does interest rate for loans vary with grade and subgrade? Yes the interest rate for loans vary with grade and sub grade with a strong positive relation. This is also a core concept in Lending Club's business model. refer to the visualizations for both.
+lcdf %>% group_by(grade,sub_grade) %>% summarise(mean(int_rate))
+
+# Visualization against grade
+ggplot(lcdf, aes( x = lcdf$int_rate)) + geom_histogram(aes(fill=grade))
+
+# Visualization against sub-grade
+ggplot(lcdf, aes( x = lcdf$int_rate)) + geom_histogram(aes(fill = sub_grade))
+
+# Computing the average, standard-deviation min and max of interest rate by grade and sub grade. - The mean, standard deviation and maximum for interest rate have a positive direct relation with grade and sub-grade. However, there is no clear or relevant relation between minimum interest rate and grade, sub grade.
+lcdf %>% group_by(grade,sub_grade) %>% summarise(mean(int_rate))
+
+lcdf %>% group_by(grade,sub_grade) %>% summarise(sd(int_rate)) 
+
+lcdf %>% group_by(grade,sub_grade) %>% summarise(min(int_rate)) 
+
+lcdf %>% group_by(grade,sub_grade) %>% summarise(max(int_rate))
+```
+
+iii) For loans which are fully paid back, how does the time-to-full-payoff vary? For this, calculate the ‘actual term’ (issue-date to last-payment-date) for all loans. How does this actual-term vary by loan grade (a box-plot can help visualize this).
+
+```{r}
+# For loans which are fully paid back, how does the time-to-full-payoff vary? 
+# Term of the loan is the duration between the last-payment-date and the loan issue-date
+# First check the format of these two columns with date values
+head(lcdf[, c("last_pymnt_d", "issue_d")])
+
+# First step is to past "01-" to the character string, to get something like "01-Dec-2018", i.e. first of each month 
+lcdf$last_pymnt_d<-paste(lcdf$last_pymnt_d, "-01", sep = "")
+
+# Then convert this character to a date type variable
+lcdf$last_pymnt_d<-parse_date_time(lcdf$last_pymnt_d,  "myd")
+
+# Check their format now
+head(lcdf[, c("last_pymnt_d", "issue_d")])
+
+
+# Now we can compute the duration between two dates using 
+#      as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d))
+#   This will return the duration in seconds -- try  
+#          x<- as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)
+#          head(x)
+#     To convert it to duration in weeks, we can use 
+#          x<- as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)/dweeks(1)
+#      Or to get the duration in years
+#          x<- as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)/dyears(1)
+#
+# Another issue to consider: what about those loans which are charged-off? These are not paid back fully by the end of the 3-year term, so the duration as calculated above will not give the accurate value for the actual-term. For these loans, we can set the actual-term at 3.
+
+
+# Actual term can be calculated as
+lcdf$actualTerm <- ifelse(lcdf$loan_status=="Fully Paid", as.duration(lcdf$issue_d  %--% lcdf$last_pymnt_d)/dyears(1), 3)
+head(lcdf$actualTerm)
+
+# Visualizing actual term to grade - It can be rightly drawn from observing the box plot that as the loan grade increases to higher risk the actual term is pushed more towards finalized term period (3 years). Majority of those (higher risk loans) also contribute to no return towards the end of the term.
+qplot(grade, actualTerm, data = lcdf, geom=c("boxplot"))
+
+# Actual return can be calculated as
+lcdf$actualReturn <- ifelse(lcdf$actualTerm>0, ((lcdf$total_pymnt-lcdf$funded_amnt)/lcdf$funded_amnt)*(1/lcdf$actualTerm)*100, 0) *(12/36)/100
+
+```
+
+iv) Calculate the annual return. Show how you calculate the percentage annual return. Is there any return from loans which are ‘charged off’? Explain. How does return from charged -off loans vary by loan grade? Compare the average return values with the average interest_rate on loans – do you notice any differences, and how do you explain this? How do returns vary by grade, and by sub-grade. If you wanted to invest in loans based on this data exploration, which loans would you invest in?
+
+```{r}
+# Payments from charged off loans
+lcdf %>% filter(loan_status=='Charged Off') %>% summarise(funded_amnt,total_pymnt)
+
+# avgPmnt is the returns from the charged off loans based upon grade
+lcdf %>% group_by(grade) %>% summarise(nLoans=n(), defaults=sum(loan_status=="Charged Off"), defaultRate=defaults/nLoans, avgInterest= mean(int_rate), stdInterest=sd(int_rate), avgLoanAMt=mean(loan_amnt), avgPmnt=mean(total_pymnt))
+lcdf %>% select(loan_status, int_rate, funded_amnt, total_pymnt) %>% head()
+
+# Annual return in $
+lcdf$annualRet <- ((lcdf$total_pymnt-lcdf$funded_amnt))*(12/36)
+lcdf$annualRet
+
+# % annual return
+lcdf$annRet <- ((lcdf$total_pymnt -lcdf$funded_amnt)/lcdf$funded_amnt)*(12/36)*100
+lcdf$annRet
+
+# No of loans charged off - 12146
+lcdf %>% select(loan_status, int_rate, funded_amnt, total_pymnt, annRet) %>% filter(annRet < 0) %>% count(loan_status)
+
+# division between grade and sub grade - The annual return decreases with increase in risk based on grades and sub-grade but the is no strong pattern observed. But the relation among the attributes annual return and grade + sub grade is inversely proportional. 
+lcdf%>% group_by(grade,sub_grade)%>% summarise(mean(annualRet))
+
+```
+
+v) What are people borrowing money for (purpose)? Examine how many loans, average amounts, etc. by purpose? Do loan amounts vary by purpose? Do defaults vary by purpose? Does loan-grade assigned by Lending Club vary by purpose?
+
+```{r}
+# purpose of the loan 
+lcdf %>% group_by(purpose) %>% tally()
+# There is no relation between purpose and the loan amount
+lcdf %>% group_by(purpose) %>% summarise(avg_funded_amt=mean(funded_amnt))
+# There is no relation between purpose and the loan status
+lcdf %>% group_by(purpose) %>% summarise(no_of_defualts=sum(loan_status=='Charged Off'))
+# The loan grade assigned by Lending Club does not vary by purpose.
+lcdf %>% group_by(purpose,grade) %>% tally()
+```
+
+vi) Consider some borrower characteristics like employment-length, annual-income, fico-scores (low, high). How do these relate to loan attribute like, for example, loan_amout, loan_status, grade, purpose, actual return, etc.
+
+```{r}
+############# How does employment length relate to various loan attributes. #############
+lcDgEmpLen <- lcdf %>% group_by(emp_length) %>% tally()
+
+#convert emp_length to factor -- with factor levels ordered in a meaningful way
+lcdf$emp_length <- factor(lcdf$emp_length, levels=c("n/a", "< 1 year","1 year","2 years", "3 years" ,  "4 years",   "5 years",   "6 years",   "7 years" ,  "8 years", "9 years", "10+ years" ))
+
+# vary by loan amount - With increase in employment length the spread for loans approved across various loan amount increases which can be observed for groups '10+ years' and '9 years'. For people with employment length between 3 to 8 years this spread decreases. However, for employment length between 1 to years the loan amount is concentrated around loan amount less than 20000. Also, if we test the association between the attributes it shows a weak positive relation.
+table(lcdf$loan_amnt, lcdf$emp_length)
+ggplot(lcdf, aes( x = loan_amnt)) + geom_histogram(aes(fill=emp_length))
+# correlation
+cor.test(as.numeric(as.factor(lcdf$loan_amnt)), as.numeric(lcdf$emp_length))
+
+# vary by loan status - A common trend observed is lower rate of "charged off" loans vs "fully paid" for various employment length. Also, if we test the association between the attributes it shows a positive relation, however, it's very weak.
+table(lcdf$loan_status, lcdf$emp_length)
+ggplot(lcdf, aes( x = emp_length)) + geom_bar(aes(fill=loan_status))
+# correlation
+cor.test(as.numeric(as.factor(lcdf$loan_status)), as.numeric(lcdf$emp_length))
+
+# vary by grade - Although, there is no clear pattern observed among the variables, and the association between the variables is very weak negative.
+table(lcdf$grade, lcdf$emp_length)
+ggplot(lcdf, aes( x = emp_length)) + geom_bar(aes(fill=grade))
+# correlation
+cor.test(as.numeric(as.factor(lcdf$grade)), as.numeric(lcdf$emp_length))
+
+# vary by purpose - Most of the loans are for 'debt_consolidation' purpose but there is no relation between the attributes and the correlation test also points out that the association value is almost 0.
+table(lcdf$purpose, lcdf$emp_length)
+ggplot(lcdf, aes( x = emp_length)) + geom_bar(aes(fill=purpose))
+# correlation
+cor.test(as.numeric(as.factor(lcdf$purpose)), as.numeric(lcdf$emp_length))
+
+# vary by actual return - Actual return for borrowers with employment length between 7 to 10+ years is higher and spread between 0 to 1 while for borrowers with employment length less than 4 years are spread more between 0 to -1.
+table(lcdf$actualReturn, lcdf$emp_length)
+ggplot(lcdf, aes( x = actualReturn)) + geom_histogram(aes(fill=emp_length))
+# correlation
+cor.test(as.numeric(as.factor(lcdf$actualReturn)), as.numeric(lcdf$emp_length))
+
+############# How does annual income relate to various loan attributes. #############
+
+# vary by loan amount - The relation between average loan amount and average loan income is a strong positive relation when grouped with grades. The association is very high for both the attributes. 
+# correlation between grade and annual income
+cor.test(as.numeric(as.factor(lcdf$grade)), lcdf$annual_inc)
+
+# since a relatively strong negative association we can group them as
+dfGrpInc <- lcdf %>% group_by(grade) %>% summarise(nLoans=n(), avgIncome=mean(annual_inc), avgLoanAmount= mean(loan_amnt))
+# table for loan amount vs annual income
+table(dfGrpInc$avgLoanAmount, dfGrpInc$avgIncome)
+ggplot(dfGrpInc, aes( x = avgLoanAmount, y = avgIncome)) + geom_bar(aes(fill=grade), stat="identity")
+# correlation between average loan amount and average income
+cor.test(as.numeric(dfGrpInc$avgLoanAmount), dfGrpInc$avgIncome)
+
+# vary by loan status -- The observed values suggest the there is a higher number of loans 'fully paid' when compared to the average income but there is no clear pattern among the variables and close to 0 value for association among
+dfStat <- lcdf %>% group_by(loan_status) %>% summarise(nLoans=n(), avgIncome=mean(annual_inc))# 
+
+# comparison for loan status and average income
+glimpse(dfStat)
+
+# correlation
+cor.test(as.numeric(as.factor(lcdf$loan_status)), lcdf$annual_inc)
+
+# vary by grade (using above summarized data line no. 129) - The variation between grade and annual income is very strong negative relation which is also visible in the correlation test which has a value near to -0.9 (approx).
+table(dfGrpInc$grade, dfGrpInc$avgIncome)
+ggplot(dfGrpInc, aes( x = avgIncome)) + geom_histogram(aes(fill=grade))
+# correlation
+cor.test(as.numeric(as.factor(dfGrpInc$grade)),  dfGrpInc$avgIncome)
+
+# vary by purpose - Borrower with lower annual income majorly use the loan for wedding and vacation while the borrowers with higher average income use it for home improvement and small business. We need more variables to derive a strong relation among the attributes but from the correlation test it is clear that the variables have a weak negative association. 
+dfGrpPur <- lcdf %>% group_by(purpose) %>% summarise(nLoans=n(), avgIncome=mean(annual_inc))
+table(dfGrpPur$purpose, dfGrpPur$avgIncome)
+ggplot(dfGrpPur, aes( x = avgIncome)) + geom_histogram(aes(fill=purpose))
+# correlation
+cor.test(as.numeric(as.factor(dfGrpPur$purpose)), dfGrpPur$avgIncome)
+
+# vary by actual return - The average actual return is low for borrowers with lower average income grouped together into high risk grades. The attributes also have a strong negative relation implying that the variables are inversely proportional.
+# correlation between actual return and grade
+cor.test(as.numeric(as.factor(lcdf$actualReturn)), as.numeric(as.factor(lcdf$grade)))
+# summarizing data based on grade
+dfGrpActRet <- lcdf %>% group_by(grade) %>% summarise(nLoans=n(), avgIncome=mean(annual_inc), avgActRet=mean(actualReturn))
+#visualizing data
+glimpse(dfGrpActRet)
+ggplot(dfGrpActRet, aes(x=avgIncome, y=avgActRet, fill=grade)) + geom_bar(stat='identity', position="dodge", width=100)
+
+# correlation
+cor.test(as.numeric(as.factor(dfGrpActRet$avgActRet)), dfGrpActRet$avgIncome)
+
+
+############ Fico score #######
+lcdf['score'] = 850
+lcdf['score_dti'] = 255
+lcdf['score_credhist'] = 127.5
+lcdf['score_cred'] = 85
+lcdf['score_newcred'] = 85
+lcdf['score_delinq'] = 59.5
+lcdf['score_delinq_amnt'] = 238
+
+glimpse(lcdf)
+
+# Amounts owed (30%)
+lcdf$score_dti <- ifelse(!is.na(lcdf$dti) & lcdf$dti > 0, 
+                         ifelse(lcdf$dti < 25, lcdf$score_dti <- lcdf$score_dti - (lcdf$score_dti * 0.1),
+                                ifelse(lcdf$dti > 24 & lcdf$dti < 49, lcdf$score_dti <- lcdf$score_dti - (lcdf$score_dti  * 0.2), lcdf$score_dti <- lcdf$score_dti - (lcdf$score_dti  * 0.3))), lcdf$score_dti * 0.1)
+
+lcdf$score_dti
+
+# Credit history (15%)
+lcdf$score_credhist <- ifelse(!is.na(lcdf$mo_sin_old_rev_tl_op) & !is.na(lcdf$mo_sin_rcnt_rev_tl_op) & lcdf$mo_sin_old_rev_tl_op > 0 & lcdf$mo_sin_rcnt_rev_tl_op > 0, ifelse(lcdf$mo_sin_old_rev_tl_op < 391 & lcdf$mo_sin_rcnt_rev_tl_op < 147, lcdf$score_credhist <- lcdf$score_credhist - (lcdf$score_credhist * 0.1), lcdf$score_credhist <- lcdf$score_credhist - (lcdf$score_credhist * 0.15)), 0)
+
+lcdf$score_credhist
+
+# Credit mix (10%)
+lcdf$score_cred <- ifelse(!is.na(lcdf$total_bal_il) & lcdf$total_bal_il > 0, lcdf$score_cred <- lcdf$score_cred - (lcdf$score_cred * 0.1), 0)
+
+lcdf$score_cred
+
+# Credit new (10%)
+lcdf$score_newcred <- ifelse(!is.na(lcdf$num_op_rev_tl) & lcdf$num_op_rev_tl > 0, ifelse(lcdf$num_op_rev_tl < 34, lcdf$score_newcred <- lcdf$score_newcred - (lcdf$score_newcred * 0.05),lcdf$score_newcred <- lcdf$score_newcred - (lcdf$score_newcred * 0.1)), lcdf$score_newcred * 0.1 )
+
+lcdf$score_newcred
+
+# Delinquency (10%)
+lcdf$score_delinq <- ifelse(!is.na(lcdf$acc_now_delinq) & !is.na(lcdf$delinq_2yrs) & lcdf$acc_now_delinq > 0 & lcdf$delinq_2yrs > 0, lcdf$score_delinq <- lcdf$score_delinq - (lcdf$score_delinq * 0.1), lcdf$score_delinq)
+
+lcdf$score_delinq
+
+# Delinquency amount (10%)
+lcdf$score_delinq_amnt <- ifelse(!is.na(lcdf$delinq_amnt) & lcdf$delinq_amnt > 0, ifelse(lcdf$delinq_amnt < 4001,lcdf$score_delinq_amnt <- lcdf$score_delinq_amnt - (lcdf$score_delinq_amnt * 0.1), lcdf$score_delinq_amnt <- lcdf$score_delinq_amnt - (lcdf$score_delinq_amnt * 0.15)), lcdf$score_delinq_amnt)
+
+lcdf$score_delinq_amnt
+
+# Final fico score
+lcdf$score <- lcdf$score_dti + lcdf$score_credhist + lcdf$score_cred + lcdf$score_newcred + lcdf$score_delinq + lcdf$score_delinq_amnt
+
+lcdf$score
+
+############# How does fico score relate to various loan attributes. #############
+# correlation with grade
+
+# correlation with loan amount - The association among the variables is closer to 0 implying no relation among the attributes.
+cor.test(as.numeric(lcdf$loan_amnt), lcdf$score)
+
+# correlation with loan status - The association among the variables is closer to 0 implying no relation among the attributes.
+cor.test(as.numeric(as.factor(lcdf$loan_status)), lcdf$score)
+
+# correlation with grade - The association among the variables is negative weak relationship implying that the variables are inversely proportional and would need more variables to build a conclusion.
+cor.test(as.numeric(as.factor(lcdf$grade)), lcdf$score)
+
+# correlation with purpose - The association among the variables is closer to 0 implying no relation among the attributes.
+cor.test(as.numeric(as.factor(lcdf$purpose)), lcdf$score)
+
+# correlation with actual return - The association among the variables is closer to 0 with a negative direction. 
+cor.test(as.numeric(as.factor(lcdf$actualReturn)), lcdf$score)
+
+```
+
+vii) Generate some (at least 3) new derived attributes which you think may be useful for predicting default., and explain what these are. For these, do an analyses as in the questions above (as reasonable based on the derived variables).
+
+```{r}
+#### Derived variables
+# Actual Annual Return (validate above for actual term)
+# Amounts owed by the borrower: lcdf$score_dti (line no. - 274)
+# Credit history of the borrower: lcdf$score_credhist (line no. - 279)
+# Credit mix of the borrower: lcdf$score_cred (line no. - 282)
+# New credit of the borrower: lcdf$score_newcred (line no. - 285)
+# Delinquency term of the borrower: lcdf$score_delinq (line no. - 288)
+# Delinquency amount of the borrower: lcdf$score_delinq_amn (line no. - 291)
+# Fico score: lcdf$score (line no. - 294)
+# 
+# (Resource: https://www.myfico.com/credit-education/whats-in-your-credit-score)
+
+############# How does amounts owed by borrower relate to various loan attributes. #############
+# calculating sum of the various credit 
+
+# vary by loan status - As the debt to income ratio increases number of fully paid loans increases, which implies a strong positive relation among the attributes.
+count <- table(lcdf$loan_status, lcdf$score_dti)
+
+barplot(count, main="score_dti", xlabel="Amounts owed based on loan status", legend = c("Charged-off", "Fully paid"))
+
+#vary by grade - As the debt to income ratio increases number of approved loans for higher grades decreases, which implies a strong negative relation among the attributes.
+counts <- table(lcdf$grade, lcdf$score_dti)
+
+barplot(counts, main="score_dti", xlabel="Amounts owed based on grade", legend = c("A", "B", "C", "D", "E", "F", "G"))
+
+############# How does  by borrower relate to various loan attributes. #############
+
+# vary by loan status - As the delinquency amount increases the number of loans fully paid becomes 0 the charged off loans are slightly above 0. And, for lower delinquency amount the count for fully paid loans increases, which shows a weak relationship among the variables.
+number <- table(lcdf$loan_status, lcdf$score_delinq_amnt)
+
+barplot(number, main="score_delinq_amnt", xlabel="Amount deliquency based on loan status", legend = c("Charged-off", "Fully paid"))
+
+#vary by grade - There is no clear pattern observed and the relation among the variables cannot be determined.
+numbers <- table(lcdf$grade, lcdf$score_delinq_amnt)
+
+barplot(numbers, main="score_delinq_amnt", xlabel="Amounts deliquency based on grade", legend = c("A", "B", "C", "D", "E", "F", "G"))
+```
+
+(b) Summarize your conclusions and main themes from your analyses
+
+Ans. The main themes observed are across all variables are that the employment length, grade, sub grade, actual return and average income have strong contribution towards the loan status, borrower profile and many more derived variables. SOme of the derived variables like fico score, and attributes around fico score help evaluate the borrower profile and identify potential risk at an early stage. For a detailed view refer to the values and conclusions discussed above.
+
+Q3. Consider the potential for data leakage. You do not want to include variables in your model which may not be available when applying the model; that is, some data may not be available for new loans before they are funded. Leakage may also arise from variables in the data which may have been updated during the loan period (ie., after the loan is funded). Identify and explain which variables will you exclude from the model.
+
+Ans. List of attributes that can potentially cause data leakage:
+
+Funded_amount_inv, loan_status, revol_bal, out_prncp, out_prncp_inv, mths_since_last_delinq, revol_util, total_pymnt, total_pymnt_inv, total_rec_prncp, total_rec_prncp, total_rec_int, total_rec_int, total_rec_late_fee, recoveries, collection_recovery_fee, last_pymnt_amt, last_credit_pull_d, collections_12_mnths_ex_med, tot_coll_amnt,total_cur_bal, chargeoff_within_12_mths, delinq_amt
+
+The attributes mentioned above should be excluded since it could potentially affect the accuracy of the model since these attributes were included after the loan was sanctioned. Adding these attributes would definitely increase the accuracy of but it would not be a realistic representation of the data that we have while deciding whether to sanction the loan or not.
+
+
+List of attributes that we would exclude from the dataset while training the model are as follows:
+
+Issue_d, emp_title, addr_state, zip_code, inq_last_6mths, inq_last_12mths, open_acc, last_pymt_d, policy_code, mths_since_recent_inq
+
+The attributes mentioned above are being excluded from the dataset because these are redundant data which would not have any value addition to the model.
+
+Q4. Do a univariate analyses to determine which variables (from amongst those you decide to consider for the next stage prediction task) will be individually useful for predicting the dependent variable (loan_status). For this, you need a measure of relationship between the dependent variable and each of the potential predictor variables. Given loan-status as a binary dependent variable, which measure will you use? From your analyses using this measure, which variables do you think will be useful for predicting loan_status? (Note – if certain variables on their own are highly predictive of the outcome, it is good to ask if this variable has a leakage issue).
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
